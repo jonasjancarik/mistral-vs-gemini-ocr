@@ -1,6 +1,12 @@
-# Mistral OCR vs Gemini 3 Flash Preview
+# Mistral vs Gemini OCR Compare
 
-Streamlit app to run Mistral OCR and Gemini OCR side-by-side on the same file.
+Side-by-side OCR comparison tool to help decide which model is the better fit for your documents.
+
+## What this is good for
+
+- Compare OCR output quality on the same file.
+- Tweak Gemini prompts and config to see differences quickly.
+- Estimate rough costs per doc and for 1000 similar docs.
 
 ## Setup
 
@@ -17,11 +23,9 @@ cp .env.example .env
 uv run streamlit run app.py
 ```
 
-You can also place keys in a `.env` file or paste them in the sidebar. Adjust the model names there if needed.
+You can also paste keys in the sidebar. Adjust model names and pricing toggles there if needed.
 
 ## Notes
 
 - Supports PDF and common image formats.
-- Mistral output is rendered as Markdown; Gemini output is plain text.
-- PDFs sent to Mistral are uploaded as temporary files for OCR.
-- Gemini uses the Files API for uploads and requests text-only output.
+- Batch pricing toggle applies a 50% discount to both providers in the cost estimates.

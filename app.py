@@ -30,6 +30,7 @@ SUPPORTED_TYPES = [
 GEMINI_INPUT_COST_PER_1M = 0.50
 GEMINI_OUTPUT_COST_PER_1M = 3.00
 MISTRAL_COST_PER_1000_PAGES = 1.00
+BATCH_DISCOUNT_MULTIPLIER = 0.5
 
 
 def guess_mime_type(file_name: str, file_bytes: bytes) -> str:
@@ -82,6 +83,7 @@ def extract_gemini_text_and_thoughts(
 def gemini_cost_summary(
     usage: object | None,
     include_thinking_in_output: bool,
+    price_multiplier: float,
 ) -> dict[str, float | int] | None:
     if not usage:
         return None
@@ -94,8 +96,8 @@ def gemini_cost_summary(
     if total_tokens is None:
         total_tokens = prompt_tokens + response_tokens + thoughts_tokens
     output_tokens = response_tokens + (thoughts_tokens if include_thinking_in_output else 0)
-    input_cost = (prompt_tokens / 1_000_000) * GEMINI_INPUT_COST_PER_1M
-    output_cost = (output_tokens / 1_000_000) * GEMINI_OUTPUT_COST_PER_1M
+    input_cost = (prompt_tokens / 1_000_000) * GEMINI_INPUT_COST_PER_1M * price_multiplier
+    output_cost = (output_tokens / 1_000_000) * GEMINI_OUTPUT_COST_PER_1M * price_multiplier
     total_cost = input_cost + output_cost
     return {
         "prompt_tokens": prompt_tokens,
@@ -232,7 +234,11 @@ with st.sidebar:
         )
         gemini_prompt = st.text_area(
             "Prompt",
-            value="Extract all text from the document.",
+            value=(
+                "Extract all text from the document, including tables. "
+                "Replace each image or figure with concise alt text in brackets, "
+                'for example: [Image: handwritten signature].'
+            ),
             height=100,
         )
         gemini_temperature = st.slider(
@@ -247,7 +253,7 @@ with st.sidebar:
             options=["text/plain", "text/markdown", "application/json", "None"],
             index=0,
         )
-        gemini_include_thoughts = st.checkbox("Include model thoughts", value=False)
+        gemini_include_thoughts = st.checkbox("Include model thoughts", value=True)
         count_thoughts_in_cost = st.checkbox(
             "Count thinking tokens in cost",
             value=True,
@@ -260,8 +266,9 @@ with st.sidebar:
     gemini_thinking = st.selectbox(
         "Gemini thinking level",
         options=["MINIMAL", "LOW", "MEDIUM", "HIGH", "NONE"],
-        index=0,
+        index=2,
     )
+    batch_pricing = st.checkbox("Use batch pricing (50% off)", value=True)
     preserve_line_breaks = st.checkbox("Preserve line breaks in preview", value=True)
     show_raw = st.checkbox("Show raw outputs", value=False)
 
@@ -362,9 +369,11 @@ results = st.session_state.get("results")
 
 if results:
     st.subheader("Results")
-    left, right = st.columns(2)
+    price_multiplier = BATCH_DISCOUNT_MULTIPLIER if batch_pricing else 1.0
+    pricing_label = "Batch (50% off)" if batch_pricing else "Standard"
 
-    with left:
+    metrics_left, metrics_right = st.columns(2)
+    with metrics_left:
         st.markdown("### Mistral OCR")
         mistral_caption = (
             f"{results['mistral_time']:.2f}s | "
@@ -375,29 +384,24 @@ if results:
             mistral_caption = f"{mistral_caption} | cached"
         st.caption(mistral_caption)
         mistral_pages = results.get("mistral_pages") or 0
-        mistral_cost = (mistral_pages / 1000) * MISTRAL_COST_PER_1000_PAGES
-        mistral_cost_1000 = mistral_pages * MISTRAL_COST_PER_1000_PAGES
+        mistral_cost = (
+            (mistral_pages / 1000) * MISTRAL_COST_PER_1000_PAGES * price_multiplier
+        )
+        mistral_cost_1000 = mistral_cost * 1000
         st.markdown(
             f"**Cost estimate**  \n"
+            f"Pricing: `{pricing_label}`  \n"
             f"Pages: `{mistral_pages}`  \n"
             f"Per doc: {format_usd(mistral_cost)}  \n"
             f"1000 docs: {format_usd(mistral_cost_1000, precision=2)}"
         )
-        if results["mistral"]:
-            st.markdown(format_markdown_preview(results["mistral"], preserve_line_breaks))
-        else:
-            st.info("No text returned.")
-
         st.download_button(
             "Download Mistral output",
             data=results["mistral"],
             file_name="mistral_ocr.txt",
         )
 
-        if show_raw:
-            st.code(results["mistral"], language="markdown")
-
-    with right:
+    with metrics_right:
         st.markdown("### Gemini 3 Flash Preview")
         st.caption(
             f"{results['gemini_time']:.2f}s | "
@@ -407,10 +411,12 @@ if results:
         gemini_costs = gemini_cost_summary(
             results.get("gemini_usage"),
             include_thinking_in_output=count_thoughts_in_cost,
+            price_multiplier=price_multiplier,
         )
         if gemini_costs:
             st.markdown(
                 f"**Cost estimate**  \n"
+                f"Pricing: `{pricing_label}`  \n"
                 f"Input tokens: `{gemini_costs['prompt_tokens']}`  \n"
                 f"Output tokens: `{gemini_costs['response_tokens']}`  \n"
                 f"Thinking tokens: `{gemini_costs['thoughts_tokens']}`  \n"
@@ -423,19 +429,32 @@ if results:
             )
         else:
             st.caption("Token usage not available for this Gemini response.")
-        if results["gemini"]:
-            st.markdown(format_markdown_preview(results["gemini"], preserve_line_breaks))
-        else:
-            st.info("No text returned.")
-
         st.download_button(
             "Download Gemini output",
             data=results["gemini"],
             file_name="gemini_ocr.txt",
         )
 
+    st.divider()
+    output_left, output_right = st.columns(2)
+    with output_left:
+        if results["mistral"]:
+            st.markdown(format_markdown_preview(results["mistral"], preserve_line_breaks))
+        else:
+            st.info("No text returned.")
+        if show_raw:
+            st.code(results["mistral"], language="markdown")
+
+    with output_right:
+        if results["gemini"]:
+            st.markdown(format_markdown_preview(results["gemini"], preserve_line_breaks))
+        else:
+            st.info("No text returned.")
         if show_raw:
             st.code(results["gemini"], language="markdown")
         if results.get("gemini_thoughts"):
             with st.expander("Gemini thoughts"):
                 st.code(results["gemini_thoughts"], language="text")
+        elif gemini_include_thoughts:
+            with st.expander("Gemini thoughts"):
+                st.caption("No thoughts returned for this request.")
